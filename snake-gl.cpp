@@ -13,13 +13,8 @@
 
 #include <glm/glm.hpp>
 
-#include <array>
 #include <span>
-#include <memory>
-#include <utility>
 #include <iostream>
-
-#include "shaders/triangle.h"
 
 template <bool IndexedRendering>
 struct GLstate {
@@ -36,7 +31,7 @@ struct GLstate {
 		  indicesCount(indices.size() * glm::uvec3::length()) {
 
 		using namespace gl;
-		gl::glEnable(gl::GL_DEPTH_TEST);
+		glEnable(gl::GL_DEPTH_TEST);
 
 		glGenVertexArrays(1, &vao);
 		glGenBuffers(1, &vbo);
@@ -60,7 +55,8 @@ struct GLstate {
 		using namespace gl;
 		glDeleteVertexArrays(1, &vao);
 		glDeleteBuffers(1, &vbo);
-		glDeleteBuffers(1, &ebo);
+		if constexpr (IndexedRendering)
+			glDeleteBuffers(1, &ebo);
 	}
 
 	auto draw() const -> void {
@@ -75,11 +71,25 @@ struct GLstate {
 	}
 };
 
+auto makeShader(const std::string& vsName, const std::string& fsName) {
+	auto vsSrc = globjects::Shader::sourceFromFile(vsName);
+	auto vs	   = globjects::Shader::create(gl::GL_VERTEX_SHADER, vsSrc.get());
+
+	auto fsSrc = globjects::Shader::sourceFromFile(fsName);
+	auto fs	   = globjects::Shader::create(gl::GL_FRAGMENT_SHADER, fsSrc.get());
+
+	auto program = globjects::Program::create();
+	program->attach(vs.get(), fs.get());
+	program->use();
+
+	return program;
+}
+
 inline constexpr std::array positions{
-	glm::vec3{ 0.5, 0.5, 0. },
-	glm::vec3{ -0.5, 0.5, 0. },
-	glm::vec3{ -0.5, -0.5, 0. },
-	glm::vec3{ 0.5, -0.5, 0. },
+	glm::vec3{ 0.05, 0.05, 0. },
+	glm::vec3{ -0.05, 0.05, 0. },
+	glm::vec3{ -0.05, -0.05, 0. },
+	glm::vec3{ 0.05, -0.05, 0. },
 };
 
 inline constexpr std::array indices{
@@ -102,15 +112,7 @@ int main(int argc, char* argv[]) {
 		std::span{ indices },
 	};
 
-	auto vsSrc = globjects::Shader::sourceFromString(triangle_vert);
-	auto vs	   = globjects::Shader::create(gl::GL_VERTEX_SHADER, vsSrc.get());
-
-	auto fsSrc = globjects::Shader::sourceFromString(triangle_frag);
-	auto fs	   = globjects::Shader::create(gl::GL_FRAGMENT_SHADER, fsSrc.get());
-
-	auto triangle = globjects::Program::create();
-	triangle->attach(vs.get(), fs.get());
-	triangle->use();
+	auto triangle = makeShader("triangle.vert", "triangle.frag");
 
 	bool running = true;
 	while (running) {
