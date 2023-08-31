@@ -102,7 +102,6 @@ int main(int argc, char* argv[]) {
 	settings.majorVersion = 4;
 	settings.minorVersion = 5;
 	sf::Window window(sf::VideoMode(800, 600), "OpenGL", sf::Style::Default, settings);
-	window.setVerticalSyncEnabled(true);
 	window.setActive();
 
 	globjects::init(sf::Context::getFunction);
@@ -114,29 +113,46 @@ int main(int argc, char* argv[]) {
 
 	auto triangle = makeShader("triangle.vert", "triangle.frag");
 
-	bool running = true;
-	while (running) {
-		// handle events
-		sf::Event event;
-		while (window.pollEvent(event)) {
-			if (event.type == sf::Event::Closed) {
-				// end the program
-				running = false;
+	flecs::world ecs;
+	ecs.system("ProcessInput")
+		.kind(flecs::OnUpdate)
+		.iter([&](flecs::iter& it) {
+			// handle events
+			sf::Event event;
+			while (window.pollEvent(event)) {
+				if (event.type == sf::Event::Closed ||
+					event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape) {
+					// end the program
+					ecs.quit();
+				}
+				else if (event.type == sf::Event::Resized) {
+					// adjust the viewport when the window is resized
+					gl::glViewport(0, 0, event.size.width, event.size.height);
+				}
+				else if (event.type == sf::Event::KeyPressed) {
+					if (event.key.code == sf::Keyboard::D)
+						gl::glPolygonMode(gl::GL_FRONT, gl::GL_LINE);
+					else if (event.key.code == sf::Keyboard::F)
+						gl::glPolygonMode(gl::GL_FRONT, gl::GL_FILL);
+				}
 			}
-			else if (event.type == sf::Event::Resized) {
-				// adjust the viewport when the window is resized
-				gl::glViewport(0, 0, event.size.width, event.size.height);
-			}
-		}
+		});
+	ecs.system("DrawLoop")
+		.kind(flecs::OnUpdate)
+		.iter([&](flecs::iter& it) {
+			// clear the buffers
+			gl::glClearColor(0, .1, .05, 1);
+			gl::glClear(gl::GL_COLOR_BUFFER_BIT | gl::GL_DEPTH_BUFFER_BIT);
 
-		// clear the buffers
-		gl::glClearColor(0, .1, .05, 1);
-		gl::glClear(gl::GL_COLOR_BUFFER_BIT | gl::GL_DEPTH_BUFFER_BIT);
+			// draw...
+			state.draw();
 
-		// draw...
-		state.draw();
-
-		// end the current frame (internally swaps the front and back buffers)
-		window.display();
-	}
+			// end the current frame (internally swaps the front and back buffers)
+			window.display();
+		});
+	ecs.app()
+		.target_fps(60)
+		.enable_rest()
+		.enable_monitor()
+		.run();
 }
