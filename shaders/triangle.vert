@@ -1,7 +1,10 @@
 #version 450 core
 
-in vec2 vPosition;
+in vec3 vPosition;
+
+uniform vec2 vTranslation;
 
 void main() {
-	gl_Position = vec4(vPosition.x, vPosition.y, 0, 1);
+	vec2 transl = vPosition.xy + vTranslation.xy;
+	gl_Position = vec4(transl.xy, vPosition.z, 1);
 }

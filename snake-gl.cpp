@@ -1,91 +1,21 @@
 ﻿// snake-gl.cpp : Defines the entry point for the application.
 //
 
-#include <flecs.h>
-#include <SFML/Window.hpp>
-
-#include <glbinding/glbinding.h>
-#include <glbinding/gl45core/gl.h>
-
-#include <globjects/globjects.h>
-#include <globjects/base/File.h>
-#include <globjects/base/StaticStringSource.h>
-
-#include <glm/glm.hpp>
-
 #include <span>
 #include <iostream>
 
-template <bool IndexedRendering>
-struct GLstate {
-	gl::GLuint vao;
-	gl::GLuint vbo;
-	gl::GLuint ebo;
-	gl::GLuint trianglesCount;
-	gl::GLuint indicesCount;
+#include <flecs.h>
+#include <SFML/Window.hpp>
+#include <glbinding/glbinding.h>
+#include <glbinding/gl45core/gl.h>
+#include <glm/glm.hpp>
 
-	explicit GLstate(
-		const std::span<const glm::vec3>  vertices,
-		const std::span<const glm::uvec3> indices)
-		: trianglesCount(vertices.size()),
-		  indicesCount(indices.size() * glm::uvec3::length()) {
+#include "PositionSystem.h"
+#include "Shader.h"
+#include "GLstate.h"
 
-		using namespace gl;
-		glEnable(gl::GL_DEPTH_TEST);
 
-		glGenVertexArrays(1, &vao);
-		glGenBuffers(1, &vbo);
-		glGenBuffers(1, &ebo);
-		// bind the Vertex Array Object first, then bind and set vertex buffer(s), and then configure vertex attributes(s).
-		glBindVertexArray(vao);
-
-		glBindBuffer(GL_ARRAY_BUFFER, vbo);
-		glBufferData(GL_ARRAY_BUFFER, vertices.size_bytes(), vertices.data(), GL_STATIC_DRAW);
-
-		if constexpr (IndexedRendering) {
-			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-			glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size_bytes(), indices.data(), GL_STATIC_DRAW);
-		}
-
-		glVertexAttribPointer(0, glm::vec3::length(), GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
-		glEnableVertexAttribArray(0);
-	}
-
-	~GLstate() {
-		using namespace gl;
-		glDeleteVertexArrays(1, &vao);
-		glDeleteBuffers(1, &vbo);
-		if constexpr (IndexedRendering)
-			glDeleteBuffers(1, &ebo);
-	}
-
-	auto draw() const -> void {
-		using namespace gl;
-		glBindVertexArray(vao);
-		if constexpr (IndexedRendering) {
-			glDrawElements(GL_TRIANGLES, indicesCount, GL_UNSIGNED_INT, 0);
-		}
-		else {
-			glDrawArrays(GL_TRIANGLES, 0, trianglesCount);
-		}
-	}
-};
-
-auto makeShader(const std::string& vsName, const std::string& fsName) {
-	auto vsSrc = globjects::Shader::sourceFromFile(vsName);
-	auto vs	   = globjects::Shader::create(gl::GL_VERTEX_SHADER, vsSrc.get());
-
-	auto fsSrc = globjects::Shader::sourceFromFile(fsName);
-	auto fs	   = globjects::Shader::create(gl::GL_FRAGMENT_SHADER, fsSrc.get());
-
-	auto program = globjects::Program::create();
-	program->attach(vs.get(), fs.get());
-	program->use();
-
-	return program;
-}
-
-inline constexpr std::array positions{
+inline constexpr std::array vertices{
 	glm::vec3{ 0.05, 0.05, 0. },
 	glm::vec3{ -0.05, 0.05, 0. },
 	glm::vec3{ -0.05, -0.05, 0. },
@@ -97,28 +27,35 @@ inline constexpr std::array indices{
 	glm::uvec3{ 0, 2, 3 },
 };
 
-int main(int argc, char* argv[]) {
+
+int main(int argc, char** argv) {
 	sf::ContextSettings settings;
 	settings.majorVersion = 4;
 	settings.minorVersion = 5;
 	sf::Window window(sf::VideoMode(800, 600), "OpenGL", sf::Style::Default, settings);
 	window.setActive();
 
-	globjects::init(sf::Context::getFunction);
+	glbinding::initialize(sf::Context::getFunction);
 
+	Shader triangle{
+		"triangle.vert",
+		"triangle.frag"
+	};
+	triangle.use();
 	GLstate<true> state{
-		std::span{ positions },
+		std::span{ vertices },
 		std::span{ indices },
 	};
 
-	auto triangle = makeShader("triangle.vert", "triangle.frag");
-
 	flecs::world ecs;
+
+	for (const auto& p : positions)
+		ecs.entity().set<Position>(p);
+
 	ecs.system("ProcessInput")
-		.kind(flecs::OnUpdate)
-		.iter([&](flecs::iter& it) {
+		.iter([&](flecs::iter&) {
 			// handle events
-			sf::Event event;
+			sf::Event event{};
 			while (window.pollEvent(event)) {
 				if (event.type == sf::Event::Closed ||
 					event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape) {
@@ -137,15 +74,17 @@ int main(int argc, char* argv[]) {
 				}
 			}
 		});
-	ecs.system("DrawLoop")
-		.kind(flecs::OnUpdate)
-		.iter([&](flecs::iter& it) {
+	ecs.system<Position const>("DrawLoop")
+		.iter([&](flecs::iter& it, Position const* positions) {
 			// clear the buffers
 			gl::glClearColor(0, .1, .05, 1);
 			gl::glClear(gl::GL_COLOR_BUFFER_BIT | gl::GL_DEPTH_BUFFER_BIT);
 
-			// draw...
-			state.draw();
+			for (auto i : it) {
+				// draw..
+				triangle.setUniform(gl::glUniform2fv, "vTranslation", positions[i]);
+				state.draw();
+			}
 
 			// end the current frame (internally swaps the front and back buffers)
 			window.display();

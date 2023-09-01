@@ -33,11 +33,13 @@ endif()
 
 # Add source to this project's executable.
 add_executable (snake-gl)
+target_include_directories(snake-gl PRIVATE "include")
 target_sources(snake-gl PRIVATE "snake-gl.cpp")
+target_sources(snake-gl PRIVATE "include/GLstate.h" "include/PositionSystem.h" "include/Shader.h")
+
 target_link_libraries(snake-gl PRIVATE $<IF:$<TARGET_EXISTS:flecs::flecs>,flecs::flecs,flecs::flecs_static>)
 target_link_libraries(snake-gl PRIVATE sfml-system sfml-network sfml-graphics sfml-window)
 target_link_libraries(snake-gl PRIVATE glbinding::glbinding glbinding::glbinding-aux)
-target_link_libraries(snake-gl PRIVATE globjects::globjects)
 target_link_libraries(snake-gl PRIVATE glm::glm)
 
 if(MSVC)
