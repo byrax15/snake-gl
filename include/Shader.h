@@ -76,10 +76,10 @@ public:
 		gl::glUseProgram(ID);
 	}
 
-	template<typename GlmVec, typename UniformFunction>
-	auto setUniform(const UniformFunction&& function, std::string_view name, GlmVec vec) {
+	template<decltype(gl::glUniform1fv) UniformFunction>
+	auto setUniform(const std::string_view name, const auto& vec) const noexcept {
 		const auto loc = gl::glGetUniformLocation(ID, name.data());
-		function(loc, 1, glm::value_ptr(vec));
+		UniformFunction(loc, 1, glm::value_ptr(vec));
 	}
 
 private:
