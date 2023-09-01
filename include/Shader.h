@@ -13,9 +13,12 @@
 #include <span>
 
 
-class Shader{
+class Shader {
 public:
 	unsigned int ID;
+
+	constexpr Shader() : ID(0) {}
+
 	// constructor generates the shader on the fly
 	// ------------------------------------------------------------------------
 	Shader(const char* vertexPath, const char* fragmentPath) {
@@ -31,20 +34,28 @@ public:
 		try {
 			// open files
 			vShaderFile.open(vertexPath);
-			fShaderFile.open(fragmentPath);
-			std::stringstream vShaderStream, fShaderStream;
+			std::stringstream vShaderStream;
 			// read file's buffer contents into streams
 			vShaderStream << vShaderFile.rdbuf();
-			fShaderStream << fShaderFile.rdbuf();
-			// close file handlers
-			vShaderFile.close();
-			fShaderFile.close();
 			// convert stream into string
-			vertexCode	 = vShaderStream.str();
+			vertexCode = vShaderStream.str();
+		}
+		catch (std::ifstream::failure& e) {
+			std::cout << "ERROR::SHADER::FILE_NOT_SUCCESSFULLY_READ: " << vertexPath << std::endl;
+			throw;
+		}
+		try {
+			// open files
+			fShaderFile.open(fragmentPath);
+			std::stringstream fShaderStream;
+			// read file's buffer contents into streams
+			fShaderStream << fShaderFile.rdbuf();
+			// convert stream into string
 			fragmentCode = fShaderStream.str();
 		}
 		catch (std::ifstream::failure& e) {
-			std::cout << "ERROR::SHADER::FILE_NOT_SUCCESSFULLY_READ: " << e.what() << std::endl;
+			std::cout << "ERROR::SHADER::FILE_NOT_SUCCESSFULLY_READ: " << fragmentPath << std::endl;
+			throw;
 		}
 		const char* vShaderCode = vertexCode.c_str();
 		const char* fShaderCode = fragmentCode.c_str();
@@ -72,11 +83,11 @@ public:
 	}
 	// activate the shader
 	// ------------------------------------------------------------------------
-	void use() const {
+	void use() const noexcept {
 		gl::glUseProgram(ID);
 	}
 
-	template<decltype(gl::glUniform1fv) UniformFunction>
+	template <decltype(gl::glUniform1fv) UniformFunction>
 	auto setUniform(const std::string_view name, const auto& vec) const noexcept {
 		const auto loc = gl::glGetUniformLocation(ID, name.data());
 		UniformFunction(loc, 1, glm::value_ptr(vec));

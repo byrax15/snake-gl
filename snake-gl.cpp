@@ -4,6 +4,7 @@
 #include <span>
 #include <iostream>
 #include <algorithm>
+#include <optional>
 
 #include <flecs.h>
 #include <SFML/Window.hpp>
@@ -42,11 +43,16 @@ int main(int argc, char** argv) {
 
 	glbinding::initialize(sf::Context::getFunction);
 
-	Shader triangle{
-		"triangle.vert",
-		"triangle.frag"
-	};
-	triangle.use();
+	Shader triangle;
+	{
+		try {
+			triangle = Shader{ "triangle.vert", "triangle.frag" };
+		}
+		catch (...) {
+			return -1;
+		}
+		triangle.use();
+	}
 
 	using GLstate = GLstate<true>;
 	GLstate state{
@@ -73,7 +79,7 @@ int main(int argc, char** argv) {
 				}
 				else if (event.type == sf::Event::Resized) {
 					// adjust the viewport when the window is resized
-					gl::glViewport(0, 0, event.size.width, event.size.height);
+					gl::glViewport(0, 0, static_cast<gl::GLsizei>(event.size.width), static_cast<gl::GLsizei>(event.size.height));
 				}
 				else if (event.type == sf::Event::KeyPressed) {
 					switch (event.key.code) {
@@ -105,7 +111,7 @@ int main(int argc, char** argv) {
 		.each([&](Position& p, const Velocity& v) {
 			p.vec += v.vec;
 			grid.clampIn(p.vec);
-			//printf("p.vec {%d, %d}\n", p.vec.x, p.vec.y);
+			// printf("p.vec {%d, %d}\n", p.vec.x, p.vec.y);
 		});
 	ecs.system("DrawBackground")
 		.iter([&](flecs::iter&) {
@@ -133,8 +139,8 @@ int main(int argc, char** argv) {
 			// end the current frame (internally swaps the front and back buffers)
 			window.display();
 		});
-	ecs.app()
-		.target_fps(15)
+	return ecs.app()
+		.target_fps(10)
 		//.enable_rest()
 		//.enable_monitor()
 		.run();
