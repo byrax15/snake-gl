@@ -5,6 +5,7 @@
 #include <iostream>
 #include <algorithm>
 #include <optional>
+#include <random>
 
 #include <flecs.h>
 #include <SFML/Window.hpp>
@@ -13,10 +14,12 @@
 #include <glm/glm.hpp>
 #include <glm/gtx/norm.hpp>
 
-#include "PositionSystem.h"
-#include "RenderSystem.h"
 #include "Shader.h"
 #include "GLstate.h"
+#include "PositionSystem.h"
+#include "RenderSystem.h"
+#include "GrowthSystem.h"
+
 
 inline constexpr Grid grid{ 24 };
 inline constexpr auto squareSizeHalf = 1 / static_cast<gl::GLfloat>(grid.dim) / 2;
@@ -43,7 +46,11 @@ int main(int argc, char** argv) {
 
 	glbinding::initialize(sf::Context::getFunction);
 
-	Shader triangle;
+	std::random_device					  rd;		 // a seed source for the random number engine
+	std::mt19937						  gen(rd()); // mersenne_twister_engine seeded with rd()
+	std::uniform_real_distribution<float> shouldSpawn{ 0, 1 };
+	std::uniform_int_distribution<int>	  gridGenerator{ -grid.dim / 2, grid.dim / 2 - 1 };
+	Shader								  triangle;
 	{
 		try {
 			triangle = Shader{ "triangle.vert", "triangle.frag" };
@@ -54,6 +61,8 @@ int main(int argc, char** argv) {
 		triangle.use();
 	}
 
+	std::vector<const Position*> applePositions;
+
 	using GLstate = GLstate<true>;
 	GLstate state{
 		std::span{ vertices },
@@ -61,14 +70,29 @@ int main(int argc, char** argv) {
 	};
 
 	flecs::world ecs;
+
+	const auto addApple = [&]() {
+		const auto& apple = ecs.entity()
+								.add<Apple>()
+								.set<Position>({ { gridGenerator(gen), gridGenerator(gen) } })
+								.set<Renderer>({ { 1, 0, 0, 1 } });
+		applePositions.push_back(apple.get<Position>());
+	};
+
 	ecs.entity("Snake")
 		.add<Player>()
 		.set<Position>({ { 0, 0 } })
 		.set<Velocity>({ { 0, 0 } })
 		.set<Renderer>({ { 1, 1, .7, 1 } });
-
-	ecs.system<const Player, Velocity>("ProcessInput")
-		.each([&](const Player& p, Velocity& v) {
+	addApple();
+	ecs.system("AppleSpawner")
+		.iter([&](flecs::iter& it) {
+			if (shouldSpawn(gen) > .01f)
+				return;
+			addApple();
+		});
+	ecs.system<Player, Velocity>("ProcessInput")
+		.each([&](const Player, Velocity& v) {
 			// handle events
 			sf::Event event{};
 			while (window.pollEvent(event)) {
@@ -107,11 +131,11 @@ int main(int argc, char** argv) {
 				}
 			}
 		});
-	ecs.system<Position, const Velocity>("ProcessVelocities")
+	ecs.system<Position, Velocity>("ProcessVelocities")
 		.each([&](Position& p, const Velocity& v) {
 			p.vec += v.vec;
 			grid.clampIn(p.vec);
-			// printf("p.vec {%d, %d}\n", p.vec.x, p.vec.y);
+			printf("p.vec {%d, %d}\n", p.vec.x, p.vec.y);
 		});
 	ecs.system("DrawBackground")
 		.iter([&](flecs::iter&) {
@@ -129,19 +153,20 @@ int main(int argc, char** argv) {
 			}
 		});
 	ecs.system<const Position, const Renderer>("DrawLoop")
-		.iter([&](flecs::iter& it, const Position* positions, const Renderer* renderers) {
-			for (auto i : it) {
-				// draw..
-				triangle.setUniform<gl::glUniform2fv>("vTranslation", grid.toDeviceCoordinates(positions[i].vec));
-				triangle.setUniform<gl::glUniform4fv>("fSquareColor", renderers[i].color);
-				state.draw();
-			}
+		.each([&](const Position& position, const Renderer& renderer) {
+			// draw...
+			triangle.setUniform<gl::glUniform2fv>("vTranslation", grid.toDeviceCoordinates(position.vec));
+			triangle.setUniform<gl::glUniform4fv>("fSquareColor", renderer.color);
+			state.draw();
+		});
+	ecs.system("EndFrame")
+		.iter([&](flecs::iter&) {
 			// end the current frame (internally swaps the front and back buffers)
 			window.display();
 		});
 	return ecs.app()
 		.target_fps(10)
-		//.enable_rest()
+		.enable_rest()
 		//.enable_monitor()
 		.run();
 }
