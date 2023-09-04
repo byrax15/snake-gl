@@ -38,6 +38,9 @@ inline constexpr std::array indices{
 
 
 int main(int argc, char** argv) {
+	flecs::world ecs;
+
+
 	sf::ContextSettings settings;
 	settings.majorVersion = 4;
 	settings.minorVersion = 5;
@@ -50,7 +53,16 @@ int main(int argc, char** argv) {
 	std::mt19937						  gen(rd()); // mersenne_twister_engine seeded with rd()
 	std::uniform_real_distribution<float> shouldSpawn{ 0, 1 };
 	std::uniform_int_distribution<int>	  gridGenerator{ -grid.dim / 2, grid.dim / 2 - 1 };
-	Shader								  triangle;
+
+	std::vector<const Position*> applePositions;
+	const auto					 addApple = [&]() {
+		  ecs.entity()
+			  .add<Apple>()
+			  .set<Position>({ { gridGenerator(gen), gridGenerator(gen) } })
+			  .set<Renderer>({ { 1, 0, 0, 1 } });
+	};
+
+	Shader triangle;
 	{
 		try {
 			triangle = Shader{ "triangle.vert", "triangle.frag" };
@@ -61,7 +73,6 @@ int main(int argc, char** argv) {
 		triangle.use();
 	}
 
-	std::vector<const Position*> applePositions;
 
 	using GLstate = GLstate<true>;
 	GLstate state{
@@ -69,29 +80,25 @@ int main(int argc, char** argv) {
 		std::span{ indices },
 	};
 
-	flecs::world ecs;
-
-	const auto addApple = [&]() {
-		const auto& apple = ecs.entity()
-								.add<Apple>()
-								.set<Position>({ { gridGenerator(gen), gridGenerator(gen) } })
-								.set<Renderer>({ { 1, 0, 0, 1 } });
-		applePositions.push_back(apple.get<Position>());
-	};
 
 	ecs.entity("Snake")
 		.add<Player>()
 		.set<Position>({ { 0, 0 } })
 		.set<Velocity>({ { 0, 0 } })
 		.set<Renderer>({ { 1, 1, .7, 1 } });
-	addApple();
+	try {
+		addApple();
+	}
+	catch (...) {
+		return -1;
+	}
 	ecs.system("AppleSpawner")
-		.iter([&](flecs::iter& it) {
+		.iter([&](flecs::iter&) {
 			if (shouldSpawn(gen) > .01f)
 				return;
 			addApple();
 		});
-	ecs.system<Player, Velocity>("ProcessInput")
+	ecs.system<const Player, Velocity>("ProcessInput")
 		.each([&](const Player, Velocity& v) {
 			// handle events
 			sf::Event event{};
@@ -131,11 +138,22 @@ int main(int argc, char** argv) {
 				}
 			}
 		});
-	ecs.system<Position, Velocity>("ProcessVelocities")
+	ecs.system<Position, const Velocity>("ProcessVelocities")
 		.each([&](Position& p, const Velocity& v) {
 			p.vec += v.vec;
 			grid.clampIn(p.vec);
-			printf("p.vec {%d, %d}\n", p.vec.x, p.vec.y);
+			// printf("p.vec {%d, %d}\n", p.vec.x, p.vec.y);
+		});
+
+	const auto playerPositionQuery = ecs.query<const Player, const Position>();
+	ecs.system<const Apple, const Position>("EatApple")
+		.each([&](const Apple, const Position& aPos) {
+			playerPositionQuery.each([&](const Player, const Position& pPos) {
+				if (aPos.vec == pPos.vec) {
+					printf("Apple pos {%d %d}\n", aPos.vec.x, aPos.vec.y);
+					return;
+				}
+			});
 		});
 	ecs.system("DrawBackground")
 		.iter([&](flecs::iter&) {
