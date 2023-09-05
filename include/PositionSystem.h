@@ -7,14 +7,17 @@
 #include <glbinding/gl45core/types.h>
 #include <glm/vec2.hpp>
 
-struct Player {};
-
 struct Position {
-	glm::ivec2 vec;
+	glm::ivec2			  vec;
+	static constexpr auto zero() { return Position{ { 0, 0 } }; }
+	static constexpr auto random(const auto& generator) {
+		return Position{ { generator(), generator() } };
+	}
 };
 
 struct Velocity {
-	glm::ivec2 vec;
+	glm::ivec2			  vec;
+	static constexpr auto zero() { return Velocity{ { 0, 0 } }; }
 };
 
 struct Grid {

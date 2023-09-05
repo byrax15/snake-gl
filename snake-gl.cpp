@@ -40,27 +40,20 @@ inline constexpr std::array indices{
 int main(int argc, char** argv) {
 	flecs::world ecs;
 
-
 	sf::ContextSettings settings;
 	settings.majorVersion = 4;
 	settings.minorVersion = 5;
-	sf::Window window(sf::VideoMode(800, 600), "OpenGL", sf::Style::Default, settings);
+	sf::Window window(sf::VideoMode(800, 600), "SnakeGL", sf::Style::Default, settings);
 	window.setActive();
-
 	glbinding::initialize(sf::Context::getFunction);
 
 	std::random_device					  rd;		 // a seed source for the random number engine
 	std::mt19937						  gen(rd()); // mersenne_twister_engine seeded with rd()
-	std::uniform_real_distribution<float> shouldSpawn{ 0, 1 };
+	std::uniform_real_distribution<float> colorOffset{ .8, 1.5 };
+	const auto							  randColor = [&]() { return colorOffset(gen); };
 	std::uniform_int_distribution<int>	  gridGenerator{ -grid.dim / 2, grid.dim / 2 - 1 };
+	const auto							  randGrid = [&]() { return gridGenerator(gen); };
 
-	std::vector<const Position*> applePositions;
-	const auto					 addApple = [&]() {
-		  ecs.entity()
-			  .add<Apple>()
-			  .set<Position>({ { gridGenerator(gen), gridGenerator(gen) } })
-			  .set<Renderer>({ { 1, 0, 0, 1 } });
-	};
 
 	Shader triangle;
 	{
@@ -73,33 +66,29 @@ int main(int argc, char** argv) {
 		triangle.use();
 	}
 
-
 	using GLstate = GLstate<true>;
 	GLstate state{
 		std::span{ vertices },
 		std::span{ indices },
 	};
 
+	auto head  = Head::create(ecs.entity("SnakeHead"), ecs, Position::zero(), Velocity::zero(), Renderer::tailColor());
+	auto tail0 = Tail::create(ecs.entity("Tail0"), ecs, Position{ { 0, -1 } }, Velocity::zero(), Renderer::random(randColor));
+	auto tail1 = Tail::create(ecs.entity("Tail1"), ecs, Position{ { 0, -2 } }, Velocity::zero(), Renderer::random(randColor));
 
-	ecs.entity("Snake")
-		.add<Player>()
-		.set<Position>({ { 0, 0 } })
-		.set<Velocity>({ { 0, 0 } })
-		.set<Renderer>({ { 1, 1, .7, 1 } });
-	try {
-		addApple();
-	}
-	catch (...) {
-		return -1;
-	}
-	ecs.system("AppleSpawner")
-		.iter([&](flecs::iter&) {
-			if (shouldSpawn(gen) > .01f)
-				return;
-			addApple();
-		});
-	ecs.system<const Player, Velocity>("ProcessInput")
-		.each([&](const Player, Velocity& v) {
+	auto snake = ecs.entity("Snake");
+	snake.set<Snake>({ head, { tail0, tail1 } });
+
+	auto apple = Apple::create(ecs.entity("StartApple"), ecs, Position::random(randGrid), Velocity::zero(), Renderer::red());
+
+	// ecs.system("AppleSpawner")
+	//	.iter([&](flecs::iter&) {
+	//		if (shouldSpawn(gen) > .01f)
+	//			return;
+	//		addApple();
+	//	});
+	ecs.system<const Head, Velocity>("ProcessInput")
+		.each([&](const Head, Velocity& v) {
 			// handle events
 			sf::Event event{};
 			while (window.pollEvent(event)) {
@@ -138,37 +127,56 @@ int main(int argc, char** argv) {
 				}
 			}
 		});
-	ecs.system<Position, const Velocity>("ProcessVelocities")
-		.each([&](Position& p, const Velocity& v) {
+
+	bool ateApple = false;
+	ecs.system<const Head, Position, const Velocity>("MoveHead")
+		.each([&](const Head, Position& p, const Velocity& v) {
+			auto& snakeStruct = *snake.get_mut<Snake>();
+			if (ateApple) {
+				auto newTail = Tail::create(
+					ecs.entity(), ecs, snakeStruct.freeEndPosition(), Velocity::zero(), Renderer::random(randColor));
+				snakeStruct.tail.push_back(newTail);
+				ateApple = false;
+			}
+			else {
+				for (auto it{ snakeStruct.tail.end() - 1 }; it > snakeStruct.tail.begin(); --it) {
+					it->get_mut<Position>()->vec = (it - 1)->get<Position>()->vec;
+				}
+				snakeStruct.tail[0].get_mut<Position>()->vec = snakeStruct.head.get<Position>()->vec;
+			}
+
 			p.vec += v.vec;
 			grid.clampIn(p.vec);
 			// printf("p.vec {%d, %d}\n", p.vec.x, p.vec.y);
 		});
-
-	const auto playerPositionQuery = ecs.query<const Player, const Position>();
+	const auto headPositions = ecs.query<const Head, const Position>("HeadPositionQuery");
 	ecs.system<const Apple, const Position>("EatApple")
-		.each([&](const Apple, const Position& aPos) {
-			playerPositionQuery.each([&](const Player, const Position& pPos) {
+		.each([&](flecs::entity e, const Apple, const Position& aPos) {
+			headPositions.each([&](const Head, const Position& pPos) {
 				if (aPos.vec == pPos.vec) {
-					printf("Apple pos {%d %d}\n", aPos.vec.x, aPos.vec.y);
-					return;
+					Apple::create(ecs.entity(), ecs, Position::random(randGrid), Velocity::zero(), Renderer::red());
+					e.destruct();
+					ateApple = true;
 				}
 			});
 		});
 	ecs.system("DrawBackground")
 		.iter([&](flecs::iter&) {
 			// clear the buffers
-			gl::glClearColor(0, .1, .05, 1);
+			gl::glClearColor(.7, .7, .7, 1);
 			gl::glClear(gl::GL_COLOR_BUFFER_BIT | gl::GL_DEPTH_BUFFER_BIT);
 			for (auto i = -grid.dim / 2; i < grid.dim / 2; ++i) {
 				for (auto j = -grid.dim / 2; j < grid.dim / 2; ++j) {
 					if ((i + j) % 2 == 0)
 						continue;
 					triangle.setUniform<gl::glUniform2fv>("vTranslation", grid.toDeviceCoordinates(glm::ivec2{ i, j }));
-					triangle.setUniform<gl::glUniform4fv>("fSquareColor", glm::vec4{ 0, .1, .05, 1 } * 1.2f);
+					triangle.setUniform<gl::glUniform4fv>("fSquareColor", glm::vec4{ .7, .7, .7, 1 } * 1.2f);
 					state.draw();
 				}
 			}
+			triangle.setUniform<gl::glUniform2fv>("vTranslation", grid.toDeviceCoordinates(glm::ivec2{ 0, 0 }));
+			triangle.setUniform<gl::glUniform4fv>("fSquareColor", glm::vec4{ .7, .7, .7, 1 } * 5.f);
+			state.draw();
 		});
 	ecs.system<const Position, const Renderer>("DrawLoop")
 		.each([&](const Position& position, const Renderer& renderer) {
