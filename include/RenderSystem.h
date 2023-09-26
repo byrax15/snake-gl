@@ -16,9 +16,3 @@ struct Renderer {
 		return r;
 	}
 };
-
-template <typename Tag>
-constexpr auto makeDrawSystem(flecs::world& ecs, std::string_view systemName, auto&& drawFunc) {
-	ecs.system<const Position, const Renderer, const Tag>(systemName.data())
-		.each(drawFunc);
-}

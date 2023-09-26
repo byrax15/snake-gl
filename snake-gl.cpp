@@ -169,17 +169,22 @@ int main() {
 			}
 		});
 
-	const auto makeDrawFunc = [&]<typename Tag>() {
-		return [&](const Position& position, const Renderer& renderer, const Tag) {
-			// draw...
-			gl::glUniform2fv(triangle.vTranslationLocation, 1, glm::value_ptr(grid.toDeviceCoordinates(position.vec)));
-			gl::glUniform4fv(triangle.fSquareColorLocation, 1, glm::value_ptr(renderer.color));
-			state.draw();
-		};
+	const auto drawFunc = [&](const Position& position, const Renderer& renderer) {
+		// draw...
+		gl::glUniform2fv(triangle.vTranslationLocation, 1, glm::value_ptr(grid.toDeviceCoordinates(position.vec)));
+		gl::glUniform4fv(triangle.fSquareColorLocation, 1, glm::value_ptr(renderer.color));
+		state.draw();
 	};
-	makeDrawSystem<Tail>(ecs, "DrawTail", makeDrawFunc.operator()<Tail>());
-	makeDrawSystem<Apple>(ecs, "DrawApple", makeDrawFunc.operator()<Apple>());
-	makeDrawSystem<Head>(ecs, "DrawHead", makeDrawFunc.operator()<Head>());
+
+	const auto headRenderers  = ecs.query<const Position, const Renderer, const Head>("HeadRenderersQuery");
+	const auto appleRenderers = ecs.query<const Position, const Renderer, const Apple>("AppleRenderersQuery");
+	const auto tailRenderers  = ecs.query<const Position, const Renderer, const Tail>("TailRenderersQuery");
+	ecs.system("RenderLoop")
+		.iter([&](flecs::iter&) {
+			tailRenderers.each([&](const Position& p, const Renderer& r, const Tail) { drawFunc(p,r); });
+			appleRenderers.each([&](const Position& p, const Renderer& r, const Apple) { drawFunc(p,r); });
+			headRenderers.each([&](const Position& p, const Renderer& r, const Head) { drawFunc(p,r); });
+		});
 
 	ecs.system("EndFrame")
 		.iter([&](flecs::iter&) {
