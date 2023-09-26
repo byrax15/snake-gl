@@ -23,9 +23,11 @@ struct Velocity {
 struct Grid {
 	gl::GLint dim;
 
-	constexpr Grid(gl::GLint dim) : dim(dim) {
+	struct SizeException: std::exception {};
+
+	explicit constexpr Grid(gl::GLint dim) : dim(dim) {
 		if (dim % 2 != 0)
-			throw "Grid must have an even size";
+			throw SizeException();
 	}
 
 	[[nodiscard]] constexpr auto toDeviceCoordinates(const glm::ivec2 position) const noexcept {

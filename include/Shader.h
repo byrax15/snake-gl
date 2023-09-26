@@ -17,6 +17,9 @@ class Shader {
 public:
 	unsigned int ID;
 
+	struct FileMissingException : std::exception {};
+	struct UniformException : std::exception {};
+
 	constexpr Shader() : ID(0) {}
 
 	// constructor generates the shader on the fly
@@ -42,7 +45,7 @@ public:
 		}
 		catch (std::ifstream::failure& e) {
 			std::cout << "ERROR::SHADER::FILE_NOT_SUCCESSFULLY_READ: " << vertexPath << std::endl;
-			throw;
+			throw FileMissingException();
 		}
 		try {
 			// open files
@@ -55,7 +58,7 @@ public:
 		}
 		catch (std::ifstream::failure& e) {
 			std::cout << "ERROR::SHADER::FILE_NOT_SUCCESSFULLY_READ: " << fragmentPath << std::endl;
-			throw;
+			throw FileMissingException();
 		}
 		const char* vShaderCode = vertexCode.c_str();
 		const char* fShaderCode = fragmentCode.c_str();
@@ -87,11 +90,6 @@ public:
 		gl::glUseProgram(ID);
 	}
 
-	template <decltype(gl::glUniform1fv) UniformFunction>
-	auto setUniform(const std::string_view name, const auto& vec) const noexcept {
-		const auto loc = gl::glGetUniformLocation(ID, name.data());
-		UniformFunction(loc, 1, glm::value_ptr(vec));
-	}
 
 private:
 	// utility function for checking shader compilation/linking errors.

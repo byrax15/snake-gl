@@ -24,20 +24,40 @@
 inline constexpr Grid grid{ 24 };
 inline constexpr auto squareSizeHalf = 1 / static_cast<gl::GLfloat>(grid.dim) / 2;
 
-inline constexpr std::array vertices{
-	glm::vec3{ squareSizeHalf, squareSizeHalf, 0. },
-	glm::vec3{ -squareSizeHalf, squareSizeHalf, 0. },
-	glm::vec3{ -squareSizeHalf, -squareSizeHalf, 0. },
-	glm::vec3{ squareSizeHalf, -squareSizeHalf, 0. },
+inline IndexedModel square{
+	{
+		glm::vec3{ squareSizeHalf, squareSizeHalf, 0. },
+		glm::vec3{ -squareSizeHalf, squareSizeHalf, 0. },
+		glm::vec3{ -squareSizeHalf, -squareSizeHalf, 0. },
+		glm::vec3{ squareSizeHalf, -squareSizeHalf, 0. },
+	},
+	{
+		glm::uvec3{ 0, 1, 2 },
+		glm::uvec3{ 0, 2, 3 },
+	}
 };
 
-inline constexpr std::array indices{
-	glm::uvec3{ 0, 1, 2 },
-	glm::uvec3{ 0, 2, 3 },
+struct TriangleShader : Shader {
+	gl::GLint vTranslationLocation, fSquareColorLocation;
+
+	TriangleShader() : Shader{ "triangle.vert", "triangle.frag" } {
+		using gl::glGetUniformLocation;
+
+		const auto getUniform = [](auto ID, std::string_view name) {
+			const auto location = glGetUniformLocation(ID, name.data());
+			if (location < 0) {
+				std::cerr << "Invalid uniform name : " << name << "\n";
+				throw;
+			}
+			return location;
+		};
+
+		vTranslationLocation = getUniform(ID, "vTranslation");
+		fSquareColorLocation = getUniform(ID, "fSquareColor");
+	}
 };
 
-
-int main(int argc, char** argv) {
+int main() {
 	flecs::world ecs;
 
 	sf::ContextSettings settings;
@@ -55,26 +75,23 @@ int main(int argc, char** argv) {
 	const auto							  randGrid = [&]() { return gridGenerator(gen); };
 
 
-	Shader triangle;
+	TriangleShader triangle;
 	{
 		try {
-			triangle = Shader{ "triangle.vert", "triangle.frag" };
+			triangle = TriangleShader{};
+			triangle.use();
 		}
-		catch (...) {
+		catch (std::exception&) {
 			return -1;
 		}
-		triangle.use();
 	}
 
-	using GLstate = GLstate<true>;
-	GLstate state{
-		std::span{ vertices },
-		std::span{ indices },
-	};
 
-	auto head  = Head::create(ecs.entity("SnakeHead"), ecs, Position::zero(), Velocity::zero(), Renderer::tailColor());
-	auto tail0 = Tail::create(ecs.entity("Tail0"), ecs, Position{ { 0, -1 } }, Velocity::zero(), Renderer::random(randColor));
-	auto tail1 = Tail::create(ecs.entity("Tail1"), ecs, Position{ { 0, -2 } }, Velocity::zero(), Renderer::random(randColor));
+	GLstate state{ std::move(square) };
+
+	auto head  = Head::create(ecs.entity("SnakeHead"), ecs, Position::zero(), Velocity::zero(), Renderer::headColor());
+	auto tail0 = Tail::create(ecs.entity("Tail0"), ecs, Position{ { 0, -1 } }, Velocity::zero(), Renderer::tailColor());
+	auto tail1 = Tail::create(ecs.entity("Tail1"), ecs, Position{ { 0, -2 } }, Velocity::zero(), Renderer::tailColor());
 
 	auto snake = ecs.entity("Snake");
 	snake.set<Snake>({ head, { tail0, tail1 } });
@@ -134,16 +151,15 @@ int main(int argc, char** argv) {
 			auto& snakeStruct = *snake.get_mut<Snake>();
 			if (ateApple) {
 				auto newTail = Tail::create(
-					ecs.entity(), ecs, snakeStruct.freeEndPosition(), Velocity::zero(), Renderer::random(randColor));
+					ecs.entity(), ecs, snakeStruct.freeEndPosition(), Velocity::zero(), Renderer::tailColor());
 				snakeStruct.tail.push_back(newTail);
 				ateApple = false;
 			}
-			else {
-				for (auto it{ snakeStruct.tail.end() - 1 }; it > snakeStruct.tail.begin(); --it) {
-					it->get_mut<Position>()->vec = (it - 1)->get<Position>()->vec;
-				}
-				snakeStruct.tail[0].get_mut<Position>()->vec = snakeStruct.head.get<Position>()->vec;
+
+			for (auto it{ snakeStruct.tail.end() - 1 }; it > snakeStruct.tail.begin(); --it) {
+				it->get_mut<Position>()->vec = (it - 1)->get<Position>()->vec;
 			}
+			snakeStruct.tail[0].get_mut<Position>()->vec = snakeStruct.head.get<Position>()->vec;
 
 			p.vec += v.vec;
 			grid.clampIn(p.vec);
@@ -163,28 +179,32 @@ int main(int argc, char** argv) {
 	ecs.system("DrawBackground")
 		.iter([&](flecs::iter&) {
 			// clear the buffers
-			gl::glClearColor(.7, .7, .7, 1);
 			gl::glClear(gl::GL_COLOR_BUFFER_BIT | gl::GL_DEPTH_BUFFER_BIT);
+
 			for (auto i = -grid.dim / 2; i < grid.dim / 2; ++i) {
 				for (auto j = -grid.dim / 2; j < grid.dim / 2; ++j) {
 					if ((i + j) % 2 == 0)
 						continue;
-					triangle.setUniform<gl::glUniform2fv>("vTranslation", grid.toDeviceCoordinates(glm::ivec2{ i, j }));
-					triangle.setUniform<gl::glUniform4fv>("fSquareColor", glm::vec4{ .7, .7, .7, 1 } * 1.2f);
+					gl::glUniform2fv(triangle.vTranslationLocation, 1, glm::value_ptr(grid.toDeviceCoordinates(glm::ivec2{ i, j })));
+					gl::glUniform4fv(triangle.fSquareColorLocation, 1, glm::value_ptr(Renderer::gridColor() * 1.2f));
 					state.draw();
 				}
 			}
-			triangle.setUniform<gl::glUniform2fv>("vTranslation", grid.toDeviceCoordinates(glm::ivec2{ 0, 0 }));
-			triangle.setUniform<gl::glUniform4fv>("fSquareColor", glm::vec4{ .7, .7, .7, 1 } * 5.f);
-			state.draw();
 		});
-	ecs.system<const Position, const Renderer>("DrawLoop")
-		.each([&](const Position& position, const Renderer& renderer) {
+
+
+	const auto makeDrawFunc = [&]<typename Tag>() {
+		return [&](const Position& position, const Renderer& renderer, const Tag) {
 			// draw...
-			triangle.setUniform<gl::glUniform2fv>("vTranslation", grid.toDeviceCoordinates(position.vec));
-			triangle.setUniform<gl::glUniform4fv>("fSquareColor", renderer.color);
+			gl::glUniform2fv(triangle.vTranslationLocation, 1, glm::value_ptr(grid.toDeviceCoordinates(position.vec)));
+			gl::glUniform4fv(triangle.fSquareColorLocation, 1, glm::value_ptr(renderer.color));
 			state.draw();
-		});
+		};
+	};
+	makeDrawSystem<Tail>(ecs,"DrawTail", makeDrawFunc.operator()<Tail>());
+	makeDrawSystem<Apple>(ecs,"DrawApple", makeDrawFunc.operator()<Apple>());
+	makeDrawSystem<Head>(ecs, "DrawHead", makeDrawFunc.operator()<Head>());
+
 	ecs.system("EndFrame")
 		.iter([&](flecs::iter&) {
 			// end the current frame (internally swaps the front and back buffers)
