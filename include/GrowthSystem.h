@@ -26,12 +26,4 @@ struct Tail : Create<Tail> {};
 struct Snake {
 	flecs::entity			   head;
 	std::vector<flecs::entity> tail;
-
-	auto freeEndPosition() const noexcept {
-		assert(tail.size() >= 2);
-		const auto last		= (tail.cend() - 1)->get<Position>()->vec;
-		const auto nextLast = (tail.cend() - 2)->get<Position>()->vec;
-		Position   p{ nextLast - last };
-		return p;
-	}
 };

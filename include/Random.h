@@ -6,8 +6,8 @@
 #include <random>
 
 namespace Random {
-	inline std::random_device rd;
-	inline std::mt19937		  gen{ rd() };
+	std::random_device rd;
+	std::mt19937	   gen{ rd() };
 
 	template <typename DistribImpl>
 	class Distribution {

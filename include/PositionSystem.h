@@ -23,7 +23,7 @@ struct Velocity {
 struct Grid {
 	gl::GLint dim;
 
-	struct SizeException: std::exception {};
+	struct SizeException : std::exception {};
 
 	explicit constexpr Grid(gl::GLint dim) : dim(dim) {
 		if (dim % 2 != 0)
@@ -37,8 +37,11 @@ struct Grid {
 		};
 	}
 
-	constexpr auto clampIn(glm::ivec2& position) const noexcept {
-		position.x = std::clamp(position.x, -dim / 2, dim / 2 - 1);
-		position.y = std::clamp(position.y, -dim / 2, dim / 2 - 1);
-	};
+	[[nodiscard]] constexpr auto outOfBounds(glm::ivec2 position) const noexcept {
+		if (-dim / 2 > position.x || position.x > dim / 2 - 1)
+			return true;
+		if (-dim / 2 > position.y || position.y > dim / 2 - 1)
+			return true;
+		return false;
+	}
 };

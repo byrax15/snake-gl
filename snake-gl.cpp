@@ -3,8 +3,8 @@
 
 #include <span>
 #include <iostream>
-#include <optional>
 #include <random>
+#include <ranges>
 
 #include <flecs.h>
 #include <SFML/Window.hpp>
@@ -19,23 +19,22 @@
 #include "Random.h"
 
 
-inline constexpr Grid	   grid{ 24 };
-inline constexpr auto	   squareSizeHalf = 1 / static_cast<gl::GLfloat>(grid.dim) / 2;
-const Random::Distribution randColor{ std::uniform_real_distribution<float>{ .8, 1.5 } };
-const Random::Distribution randGrid{ std::uniform_int_distribution<int>{ -grid.dim / 2, grid.dim / 2 - 1 } };
-
-inline IndexedModel square{
-	{
-		glm::vec3{ squareSizeHalf, squareSizeHalf, 0. },
-		glm::vec3{ -squareSizeHalf, squareSizeHalf, 0. },
-		glm::vec3{ -squareSizeHalf, -squareSizeHalf, 0. },
-		glm::vec3{ squareSizeHalf, -squareSizeHalf, 0. },
-	},
-	{
-		glm::uvec3{ 0, 1, 2 },
-		glm::uvec3{ 0, 2, 3 },
-	}
+inline constexpr Grid grid{ 24 };
+inline constexpr auto squareSizeHalf = 1 / static_cast<gl::GLfloat>(grid.dim) / 2;
+inline IndexedModel	  square{
+	  std::vector{
+		  glm::vec3{ squareSizeHalf, squareSizeHalf, 0. },
+		  glm::vec3{ -squareSizeHalf, squareSizeHalf, 0. },
+		  glm::vec3{ -squareSizeHalf, -squareSizeHalf, 0. },
+		  glm::vec3{ squareSizeHalf, -squareSizeHalf, 0. },
+	  },
+	  std::vector{
+		  glm::uvec3{ 0, 1, 2 },
+		  glm::uvec3{ 0, 2, 3 },
+	  }
 };
+const Random::Distribution randColor{ std::uniform_real_distribution<float>{ 1.1f, 1.5f } };
+const Random::Distribution randGrid{ std::uniform_int_distribution<int>{ -grid.dim / 2, grid.dim / 2 - 1 } };
 
 struct TriangleShader : Shader {
 	gl::GLint vTranslationLocation, fSquareColorLocation;
@@ -72,8 +71,8 @@ int main() {
 	GLstate state{ std::move(square) };
 
 	auto head  = Head::create(ecs.entity("SnakeHead"), ecs, Position::zero(), Velocity::zero(), Renderer::headColor());
-	auto tail0 = Tail::create(ecs.entity("Tail0"), ecs, Position{ { 0, -1 } }, Velocity::zero(), Renderer::tailColor());
-	auto tail1 = Tail::create(ecs.entity("Tail1"), ecs, Position{ { 0, -2 } }, Velocity::zero(), Renderer::tailColor());
+	auto tail0 = Tail::create(ecs.entity("Tail0"), ecs, Position{ { 0, -1 } }, Velocity::zero(), Renderer::random(randColor));
+	auto tail1 = Tail::create(ecs.entity("Tail1"), ecs, Position{ { 0, -2 } }, Velocity::zero(), Renderer::random(randColor));
 
 	auto snake = ecs.entity("Snake");
 	snake.set<Snake>({ head, { tail0, tail1 } });
@@ -121,27 +120,38 @@ int main() {
 			}
 		});
 
-	bool ateApple = false;
-	ecs.system<const Head, Position, const Velocity>("MoveHead")
+	const auto headRenderers  = ecs.query<const Position, const Renderer, const Head>("HeadRenderersQuery");
+	const auto appleRenderers = ecs.query<const Position, const Renderer, const Apple>("AppleRenderersQuery");
+	const auto tailRenderers  = ecs.query<const Position, const Renderer, const Tail>("TailRenderersQuery");
+	const auto tailPositions  = ecs.query<const Tail, const Position>("TailPositionsQuery");
+	const auto headPositions  = ecs.query<const Head, const Position>("HeadPositionQuery");
+
+	bool ateApple  = false;
+	bool startMove = false;
+	ecs.system<const Head, Position, const Velocity>("MoveSnake")
 		.each([&](const Head, Position& p, const Velocity& v) {
 			auto& snakeStruct = *snake.get_mut<Snake>();
 			if (ateApple) {
 				auto newTail = Tail::create(
-					ecs.entity(), ecs, snakeStruct.freeEndPosition(), Velocity::zero(), Renderer::tailColor());
+					ecs.entity(), ecs, *snakeStruct.head.get<Position>(), Velocity::zero(), Renderer::random(randColor));
 				snakeStruct.tail.push_back(newTail);
 				ateApple = false;
 			}
 
-			for (auto it{ snakeStruct.tail.end() - 1 }; it > snakeStruct.tail.begin(); --it) {
-				it->get_mut<Position>()->vec = (it - 1)->get<Position>()->vec;
-			}
-			snakeStruct.tail[0].get_mut<Position>()->vec = snakeStruct.head.get<Position>()->vec;
+			if (startMove) {
+				for (auto it{ snakeStruct.tail.end() - 1 }; it > snakeStruct.tail.begin(); --it) {
+					it->get_mut<Position>()->vec = (it - 1)->get<Position>()->vec;
+				}
+				snakeStruct.tail[0].get_mut<Position>()->vec = snakeStruct.head.get<Position>()->vec;
 
-			p.vec += v.vec;
-			grid.clampIn(p.vec);
-			// printf("p.vec {%d, %d}\n", p.vec.x, p.vec.y);
+				p.vec += v.vec;
+				if (grid.outOfBounds(p.vec))
+					ecs.quit();
+				tailPositions.each([&](const Tail, const Position& tailP) {if (p.vec == tailP.vec) ecs.quit(); });
+			}
+			startMove = v.vec.x != 0 || v.vec.y != 0;
 		});
-	const auto headPositions = ecs.query<const Head, const Position>("HeadPositionQuery");
+
 	ecs.system<const Apple, const Position>("EatApple")
 		.each([&](flecs::entity e, const Apple, const Position& aPos) {
 			headPositions.each([&](const Head, const Position& pPos) {
@@ -168,29 +178,24 @@ int main() {
 				}
 			}
 		});
-
-	const auto drawFunc = [&](const Position& position, const Renderer& renderer) {
-		// draw...
-		gl::glUniform2fv(triangle.vTranslationLocation, 1, glm::value_ptr(grid.toDeviceCoordinates(position.vec)));
-		gl::glUniform4fv(triangle.fSquareColorLocation, 1, glm::value_ptr(renderer.color));
-		state.draw();
-	};
-
-	const auto headRenderers  = ecs.query<const Position, const Renderer, const Head>("HeadRenderersQuery");
-	const auto appleRenderers = ecs.query<const Position, const Renderer, const Apple>("AppleRenderersQuery");
-	const auto tailRenderers  = ecs.query<const Position, const Renderer, const Tail>("TailRenderersQuery");
 	ecs.system("RenderLoop")
 		.iter([&](flecs::iter&) {
-			tailRenderers.each([&](const Position& p, const Renderer& r, const Tail) { drawFunc(p,r); });
-			appleRenderers.each([&](const Position& p, const Renderer& r, const Apple) { drawFunc(p,r); });
-			headRenderers.each([&](const Position& p, const Renderer& r, const Head) { drawFunc(p,r); });
+			const auto drawFunc = [&](const Position& position, const Renderer& renderer) {
+				// draw...
+				gl::glUniform2fv(triangle.vTranslationLocation, 1, glm::value_ptr(grid.toDeviceCoordinates(position.vec)));
+				gl::glUniform4fv(triangle.fSquareColorLocation, 1, glm::value_ptr(renderer.color));
+				state.draw();
+			};
+			tailRenderers.each([&](const Position& p, const Renderer& r, const Tail) { drawFunc(p, r); });
+			appleRenderers.each([&](const Position& p, const Renderer& r, const Apple) { drawFunc(p, r); });
+			headRenderers.each([&](const Position& p, const Renderer& r, const Head) { drawFunc(p, r); });
 		});
-
 	ecs.system("EndFrame")
 		.iter([&](flecs::iter&) {
 			// end the current frame (internally swaps the front and back buffers)
 			window.display();
 		});
+
 	return ecs.app()
 		.target_fps(10)
 		.enable_rest()
