@@ -1,11 +1,4 @@
 {
-  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
-  "dependencies": [
-    "flecs",
-    "sfml",
-    "soil2",
-    "glbinding",
-    "globjects",
-    "glm"
-  ]
+  "$schema" : "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "dependencies" : [ "flecs", "sfml", "soil2", "glbinding", "globjects", "glm" ]
 }

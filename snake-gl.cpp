@@ -3,7 +3,6 @@
 
 #include <span>
 #include <iostream>
-#include <algorithm>
 #include <optional>
 #include <random>
 
@@ -11,18 +10,19 @@
 #include <SFML/Window.hpp>
 #include <glbinding/glbinding.h>
 #include <glbinding/gl45core/gl.h>
-#include <glm/glm.hpp>
-#include <glm/gtx/norm.hpp>
 
 #include "Shader.h"
 #include "GLstate.h"
 #include "PositionSystem.h"
 #include "RenderSystem.h"
 #include "GrowthSystem.h"
+#include "Random.h"
 
 
-inline constexpr Grid grid{ 24 };
-inline constexpr auto squareSizeHalf = 1 / static_cast<gl::GLfloat>(grid.dim) / 2;
+inline constexpr Grid	   grid{ 24 };
+inline constexpr auto	   squareSizeHalf = 1 / static_cast<gl::GLfloat>(grid.dim) / 2;
+const Random::Distribution randColor{ std::uniform_real_distribution<float>{ .8, 1.5 } };
+const Random::Distribution randGrid{ std::uniform_int_distribution<int>{ -grid.dim / 2, grid.dim / 2 - 1 } };
 
 inline IndexedModel square{
 	{
@@ -67,26 +67,8 @@ int main() {
 	window.setActive();
 	glbinding::initialize(sf::Context::getFunction);
 
-	std::random_device					  rd;		 // a seed source for the random number engine
-	std::mt19937						  gen(rd()); // mersenne_twister_engine seeded with rd()
-	std::uniform_real_distribution<float> colorOffset{ .8, 1.5 };
-	const auto							  randColor = [&]() { return colorOffset(gen); };
-	std::uniform_int_distribution<int>	  gridGenerator{ -grid.dim / 2, grid.dim / 2 - 1 };
-	const auto							  randGrid = [&]() { return gridGenerator(gen); };
-
-
-	TriangleShader triangle;
-	{
-		try {
-			triangle = TriangleShader{};
-			triangle.use();
-		}
-		catch (std::exception&) {
-			return -1;
-		}
-	}
-
-
+	const TriangleShader triangle;
+	triangle.use();
 	GLstate state{ std::move(square) };
 
 	auto head  = Head::create(ecs.entity("SnakeHead"), ecs, Position::zero(), Velocity::zero(), Renderer::headColor());
@@ -96,14 +78,8 @@ int main() {
 	auto snake = ecs.entity("Snake");
 	snake.set<Snake>({ head, { tail0, tail1 } });
 
-	auto apple = Apple::create(ecs.entity("StartApple"), ecs, Position::random(randGrid), Velocity::zero(), Renderer::red());
+	Apple::create(ecs.entity("StartApple"), ecs, Position::random(randGrid), Velocity::zero(), Renderer::red());
 
-	// ecs.system("AppleSpawner")
-	//	.iter([&](flecs::iter&) {
-	//		if (shouldSpawn(gen) > .01f)
-	//			return;
-	//		addApple();
-	//	});
 	ecs.system<const Head, Velocity>("ProcessInput")
 		.each([&](const Head, Velocity& v) {
 			// handle events
@@ -176,6 +152,7 @@ int main() {
 				}
 			});
 		});
+
 	ecs.system("DrawBackground")
 		.iter([&](flecs::iter&) {
 			// clear the buffers
@@ -192,7 +169,6 @@ int main() {
 			}
 		});
 
-
 	const auto makeDrawFunc = [&]<typename Tag>() {
 		return [&](const Position& position, const Renderer& renderer, const Tag) {
 			// draw...
@@ -201,8 +177,8 @@ int main() {
 			state.draw();
 		};
 	};
-	makeDrawSystem<Tail>(ecs,"DrawTail", makeDrawFunc.operator()<Tail>());
-	makeDrawSystem<Apple>(ecs,"DrawApple", makeDrawFunc.operator()<Apple>());
+	makeDrawSystem<Tail>(ecs, "DrawTail", makeDrawFunc.operator()<Tail>());
+	makeDrawSystem<Apple>(ecs, "DrawApple", makeDrawFunc.operator()<Apple>());
 	makeDrawSystem<Head>(ecs, "DrawHead", makeDrawFunc.operator()<Head>());
 
 	ecs.system("EndFrame")
