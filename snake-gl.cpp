@@ -55,10 +55,52 @@ struct TriangleShader : Shader {
 		fSquareColorLocation = getUniform(ID, "fSquareColor");
 	}
 };
+struct GameLoop {};
+struct RenderSystem {};
+
+struct GameState {
+public:
+	enum class State {
+		Running,
+		Paused,
+		Restarting,
+	};
+
+	bool changed = false;
+	bool startMove = false;
+
+private:
+	State s{ State::Running };
+
+public:
+	[[nodiscard]] auto state() const noexcept { return s; }
+
+	auto pause() noexcept {
+		if (s == State::Paused)
+			return;
+
+		s		= State::Paused;
+		changed = true;
+	}
+
+	auto restart() noexcept {
+		if (s == State::Restarting)
+			return;
+
+		s		= State::Restarting;
+		changed = true;
+	}
+
+	auto resume() noexcept {
+		if (s == State::Running)
+			return;
+
+		s		= State::Running;
+		changed = true;
+	}
+};
 
 int main() {
-	flecs::world ecs;
-
 	sf::ContextSettings settings;
 	settings.majorVersion = 4;
 	settings.minorVersion = 5;
@@ -68,19 +110,30 @@ int main() {
 
 	const TriangleShader triangle;
 	triangle.use();
-	GLstate state{ std::move(square) };
 
-	auto head  = Head::create(ecs.entity("SnakeHead"), ecs, Position::zero(), Velocity::zero(), Renderer::headColor());
-	auto tail0 = Tail::create(ecs.entity("Tail0"), ecs, Position{ { 0, -1 } }, Velocity::zero(), Renderer::random(randColor));
-	auto tail1 = Tail::create(ecs.entity("Tail1"), ecs, Position{ { 0, -2 } }, Velocity::zero(), Renderer::random(randColor));
+	GLstate		 glstate{ std::move(square) };
+	flecs::world ecs;
+	auto		 RenderPhase = ecs.entity().add(flecs::Phase).depends_on(flecs::PostUpdate);
+	auto		 GamePhase	 = ecs.entity().add(flecs::Phase).depends_on(flecs::OnUpdate);
 
-	auto snake = ecs.entity("Snake");
-	snake.set<Snake>({ head, { tail0, tail1 } });
-
+	Snake::addToWorld(ecs, randColor);
 	Apple::create(ecs.entity("StartApple"), ecs, Position::random(randGrid), Velocity::zero(), Renderer::red());
+	auto gameState = ecs.entity("GameState").add<GameState>();
+
+	const auto headRenderers  = ecs.query<const Position, const Renderer, const Head>("HeadRenderersQuery");
+	const auto appleRenderers = ecs.query<const Position, const Renderer, const Apple>("AppleRenderersQuery");
+	const auto tailRenderers  = ecs.query<const Position, const Renderer, const Tail>("TailRenderersQuery");
+	const auto tailPositions  = ecs.query<const Tail, const Position>("TailPositionsQuery");
+	const auto headPositions  = ecs.query<const Head, const Position>("HeadPositionQuery");
+	const auto headVelocity	  = ecs.query<const Head, Velocity>("HeadVelocityQuery");
+	const auto gameSystems	  = ecs.query<const GameLoop>("GameLoopSystemsQuery");
+	const auto snakeHeads	  = ecs.query<const Head>("SnakeHeadQuery");
 
 	ecs.system<const Head, Velocity>("ProcessInput")
-		.each([&](const Head, Velocity& v) {
+		.kind(flecs::PreUpdate)
+		.iter([&](flecs::iter&) {
+			auto* headVel = headVelocity.first().get_mut<Velocity>();
+
 			// handle events
 			sf::Event event{};
 			while (window.pollEvent(event)) {
@@ -101,17 +154,20 @@ int main() {
 					case sf::Keyboard::P:
 						gl::glPolygonMode(gl::GL_FRONT, gl::GL_FILL);
 						break;
+					case sf::Keyboard::I:
+						gameState.get_mut<GameState>()->restart();
+						break;
 					case sf::Keyboard::W:
-						v.vec = { 0, 1 };
+						headVel->vec = { 0, 1 };
 						break;
 					case sf::Keyboard::S:
-						v.vec = { 0, -1 };
+						headVel->vec = { 0, -1 };
 						break;
 					case sf::Keyboard::A:
-						v.vec = { -1, 0 };
+						headVel->vec = { -1, 0 };
 						break;
 					case sf::Keyboard::D:
-						v.vec = { 1, 0 };
+						headVel->vec = { 1, 0 };
 						break;
 					default:
 						break;
@@ -120,39 +176,111 @@ int main() {
 			}
 		});
 
-	const auto headRenderers  = ecs.query<const Position, const Renderer, const Head>("HeadRenderersQuery");
-	const auto appleRenderers = ecs.query<const Position, const Renderer, const Apple>("AppleRenderersQuery");
-	const auto tailRenderers  = ecs.query<const Position, const Renderer, const Tail>("TailRenderersQuery");
-	const auto tailPositions  = ecs.query<const Tail, const Position>("TailPositionsQuery");
-	const auto headPositions  = ecs.query<const Head, const Position>("HeadPositionQuery");
+
+	ecs.system("GameStateSystem")
+		.kind(flecs::PostUpdate)
+		.iter([&](flecs::iter&) {
+			auto* game = gameState.get_mut<GameState>();
+			if (!game->changed)
+				return;
+			switch (game->state()) {
+			case GameState::State::Paused:
+				GamePhase.disable();
+				break;
+			case GameState::State::Restarting:
+				Snake::reset(snakeHeads.first(), ecs, randColor);
+				GamePhase.enable();
+				game->startMove = false;
+				game->resume();
+				break;
+			case GameState::State::Running:
+				game->changed = false;
+				break;
+			}
+		});
+
+	ecs.system("RenderBackground")
+		.kind(RenderPhase)
+		.iter([&](flecs::iter&) {
+			// clear the buffers
+			gl::glClear(gl::GL_COLOR_BUFFER_BIT | gl::GL_DEPTH_BUFFER_BIT);
+
+			// draw background
+			for (auto i = -grid.dim / 2; i < grid.dim / 2; ++i) {
+				for (auto j = -grid.dim / 2; j < grid.dim / 2; ++j) {
+					if ((i + j) % 2 == 0)
+						continue;
+					gl::glUniform2fv(triangle.vTranslationLocation, 1, glm::value_ptr(grid.toDeviceCoordinates(glm::ivec2{ i, j })));
+					gl::glUniform4fv(triangle.fSquareColorLocation, 1, glm::value_ptr(Renderer::gridColor() * 1.2f));
+					glstate.draw();
+				}
+			}
+		});
+	ecs.system("RenderObjects")
+		.kind(RenderPhase)
+		.iter([&](flecs::iter&) {
+			// draw...
+			const auto drawFunc = [&](const Position& position, const Renderer& renderer) {
+				gl::glUniform2fv(triangle.vTranslationLocation, 1, glm::value_ptr(grid.toDeviceCoordinates(position.vec)));
+				gl::glUniform4fv(triangle.fSquareColorLocation, 1, glm::value_ptr(renderer.color));
+				glstate.draw();
+			};
+			tailRenderers.each([&](const Position& p, const Renderer& r, const Tail) { drawFunc(p, r); });
+			appleRenderers.each([&](const Position& p, const Renderer& r, const Apple) { drawFunc(p, r); });
+			headRenderers.each([&](const Position& p, const Renderer& r, const Head) { drawFunc(p, r); });
+
+			// display
+			window.display();
+		});
+
 
 	bool ateApple  = false;
-	bool startMove = false;
 	ecs.system<const Head, Position, const Velocity>("MoveSnake")
-		.each([&](const Head, Position& p, const Velocity& v) {
-			auto& snakeStruct = *snake.get_mut<Snake>();
+		.kind(GamePhase)
+		.each([&](flecs::entity head, const Head, Position& p, const Velocity& v) {
+			std::vector<flecs::entity> nodes{ head };
+			const auto				   getSnakeNodes = [&]() {
+				while (true) {
+					auto size = nodes.size();
+					(nodes.end() - 1)->children([&](flecs::entity child) { nodes.push_back(child); });
+					auto newSize = nodes.size();
+					if (size == newSize)
+						break;
+				}
+			};
+
+			auto* state = gameState.get_mut<GameState>();
 			if (ateApple) {
-				auto newTail = Tail::create(
-					ecs.entity(), ecs, *snakeStruct.head.get<Position>(), Velocity::zero(), Renderer::random(randColor));
-				snakeStruct.tail.push_back(newTail);
+				auto newTail = Tail::create(ecs.entity(), ecs, *head.get<Position>(), Velocity::zero(), Renderer::random(randColor));
+				getSnakeNodes();
+				Snake::addTail(*(nodes.end() - 1), newTail);
 				ateApple = false;
+				goto GET_POSITIONS;
 			}
 
-			if (startMove) {
-				for (auto it{ snakeStruct.tail.end() - 1 }; it > snakeStruct.tail.begin(); --it) {
-					it->get_mut<Position>()->vec = (it - 1)->get<Position>()->vec;
+			if (state->startMove) {
+				getSnakeNodes();
+			GET_POSITIONS:
+				std::vector<Position*> positions;
+				std::transform(nodes.begin(), nodes.end(), std::back_inserter(positions), [](flecs::entity n) { return n.get_mut<Position>(); });
+				for (auto it{ positions.end() - 1 }; it > positions.begin(); --it) {
+					(*it)->vec = (*(it - 1))->vec;
 				}
-				snakeStruct.tail[0].get_mut<Position>()->vec = snakeStruct.head.get<Position>()->vec;
 
 				p.vec += v.vec;
 				if (grid.outOfBounds(p.vec))
-					ecs.quit();
-				tailPositions.each([&](const Tail, const Position& tailP) {if (p.vec == tailP.vec) ecs.quit(); });
+					gameState.get_mut<GameState>()->pause();
+				else
+					tailPositions.each([&](const Tail, const Position& tailP) {
+						if (p.vec == tailP.vec)
+							gameState.get_mut<GameState>()->pause();
+					});
 			}
-			startMove = v.vec.x != 0 || v.vec.y != 0;
+			state->startMove = v.vec.x != 0 || v.vec.y != 0;
 		});
 
 	ecs.system<const Apple, const Position>("EatApple")
+		.kind(GamePhase)
 		.each([&](flecs::entity e, const Apple, const Position& aPos) {
 			headPositions.each([&](const Head, const Position& pPos) {
 				if (aPos.vec == pPos.vec) {
@@ -161,39 +289,6 @@ int main() {
 					ateApple = true;
 				}
 			});
-		});
-
-	ecs.system("DrawBackground")
-		.iter([&](flecs::iter&) {
-			// clear the buffers
-			gl::glClear(gl::GL_COLOR_BUFFER_BIT | gl::GL_DEPTH_BUFFER_BIT);
-
-			for (auto i = -grid.dim / 2; i < grid.dim / 2; ++i) {
-				for (auto j = -grid.dim / 2; j < grid.dim / 2; ++j) {
-					if ((i + j) % 2 == 0)
-						continue;
-					gl::glUniform2fv(triangle.vTranslationLocation, 1, glm::value_ptr(grid.toDeviceCoordinates(glm::ivec2{ i, j })));
-					gl::glUniform4fv(triangle.fSquareColorLocation, 1, glm::value_ptr(Renderer::gridColor() * 1.2f));
-					state.draw();
-				}
-			}
-		});
-	ecs.system("RenderLoop")
-		.iter([&](flecs::iter&) {
-			const auto drawFunc = [&](const Position& position, const Renderer& renderer) {
-				// draw...
-				gl::glUniform2fv(triangle.vTranslationLocation, 1, glm::value_ptr(grid.toDeviceCoordinates(position.vec)));
-				gl::glUniform4fv(triangle.fSquareColorLocation, 1, glm::value_ptr(renderer.color));
-				state.draw();
-			};
-			tailRenderers.each([&](const Position& p, const Renderer& r, const Tail) { drawFunc(p, r); });
-			appleRenderers.each([&](const Position& p, const Renderer& r, const Apple) { drawFunc(p, r); });
-			headRenderers.each([&](const Position& p, const Renderer& r, const Head) { drawFunc(p, r); });
-		});
-	ecs.system("EndFrame")
-		.iter([&](flecs::iter&) {
-			// end the current frame (internally swaps the front and back buffers)
-			window.display();
 		});
 
 	return ecs.app()

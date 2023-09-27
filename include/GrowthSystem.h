@@ -23,7 +23,31 @@ struct Head : Create<Head> {};
 
 struct Tail : Create<Tail> {};
 
-struct Snake {
-	flecs::entity			   head;
-	std::vector<flecs::entity> tail;
-};
+namespace Snake {
+	static auto addTail(flecs::entity base, flecs::entity tip) {
+		tip.child_of(base);
+	}
+
+	static auto addToWorld(const flecs::world& ecs, const auto& randColor) {
+		auto head  = Head::create(ecs.entity("SnakeHead"), ecs, Position::zero(), Velocity::zero(), Renderer::headColor());
+		auto tail0 = Tail::create(ecs.entity("Tail0"), ecs, Position{ { 0, -1 } }, Velocity::zero(), Renderer::random(randColor));
+		auto tail1 = Tail::create(ecs.entity("Tail1"), ecs, Position{ { 0, -2 } }, Velocity::zero(), Renderer::random(randColor));
+		addTail(head, tail0);
+		addTail(tail0, tail1);
+		return head;
+	}
+
+	static auto reset( flecs::entity head, flecs::world& ecs, const auto& randColor) {
+		head.get_mut<Position>()->vec = {0,0};
+		head.get_mut<Velocity>()->vec = {0,0};
+
+		const auto tails = ecs.filter<const Tail, Velocity>();
+
+		head.children([](flecs::entity c) {c.destruct();});
+		auto tail0 = Tail::create(ecs.entity("Tail0"), ecs, Position{ { 0, -1 } }, Velocity::zero(), Renderer::random(randColor));
+		auto tail1 = Tail::create(ecs.entity("Tail1"), ecs, Position{ { 0, -2 } }, Velocity::zero(), Renderer::random(randColor));
+		addTail(head, tail0);
+		addTail(tail0, tail1);
+		return head;
+	}
+}
