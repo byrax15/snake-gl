@@ -66,7 +66,7 @@ public:
 		Restarting,
 	};
 
-	bool changed = false;
+	bool changed   = false;
 	bool startMove = false;
 
 private:
@@ -234,7 +234,7 @@ int main() {
 		});
 
 
-	bool ateApple  = false;
+	bool ateApple = false;
 	ecs.system<const Head, Position, const Velocity>("MoveSnake")
 		.kind(GamePhase)
 		.each([&](flecs::entity head, const Head, Position& p, const Velocity& v) {
@@ -248,18 +248,21 @@ int main() {
 						break;
 				}
 			};
+			GameState* state;
 
-			auto* state = gameState.get_mut<GameState>();
 			if (ateApple) {
 				auto newTail = Tail::create(ecs.entity(), ecs, *head.get<Position>(), Velocity::zero(), Renderer::random(randColor));
 				getSnakeNodes();
 				Snake::addTail(*(nodes.end() - 1), newTail);
 				ateApple = false;
+				state	 = gameState.get_mut<GameState>();
 				goto GET_POSITIONS;
 			}
 
 			if (state->startMove) {
 				getSnakeNodes();
+				state = gameState.get_mut<GameState>();
+
 			GET_POSITIONS:
 				std::vector<Position*> positions;
 				std::transform(nodes.begin(), nodes.end(), std::back_inserter(positions), [](flecs::entity n) { return n.get_mut<Position>(); });
